@@ -1,0 +1,60 @@
+from dotenv import load_dotenv
+import os
+from dataclasses import dataclass
+
+@dataclass
+class MySQLConfig():
+    host: str
+    port: int
+    user: str
+    password: str
+    database: str
+    table: str = 'users'
+
+@dataclass
+class MongoDBConfig():
+    uri: str
+    db_name: str
+
+def get_database_config():
+    load_dotenv()
+
+    config = {
+        "mysql" : MySQLConfig(
+    host=os.getenv("MYSQL_HOST"),
+    port = os.getenv("MYSQL_PORT"),
+    user = os.getenv("MYSQL_USER"),
+    password = os.getenv("MYSQL_PASSWORD"),
+    database = os.getenv("MYSQL_DATABASE")
+        ),
+        "mongodb" : MongoDBConfig(
+            uri=os.getenv("MONGO_URI"),
+            db_name=os.getenv("MONGO_DB_NAME")
+        )
+    }
+    return config
+
+def get_spark_config():
+    db_configs = get_database_config()
+
+    return {
+        "mysql" : {
+            "table": db_configs["mysql"].table,
+            "jdbc_url": "jdbc:mysql://{}:{}/{}".format(db_configs["mysql"].host, db_configs["mysql"].port, db_configs["mysql"].database),
+            "config": {
+                "host": db_configs["mysql"].host,
+                "port": db_configs["mysql"].port,
+                "user": db_configs["mysql"].user,  # Add this line
+                "password": db_configs["mysql"].password,
+                "database": db_configs["mysql"].database,
+                "driver": "com.mysql.cj.jdbc.Driver"  # Add this line
+            }
+        },
+        "mongodb": {},
+        "redis": {}
+    }
+
+
+if __name__ == "__main__":
+    spark_config = get_spark_config()
+    print(spark_config)
