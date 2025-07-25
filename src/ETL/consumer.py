@@ -43,6 +43,12 @@ def consume_and_validate():
         value_serializer=lambda x: json.dumps(x).encode('utf-8')
     )
 
+    # Initialize producer for Spark input topic
+    spark_producer = KafkaProducer(
+        bootstrap_servers="192.168.2.26:9092",
+        value_serializer=lambda x: json.dumps(x).encode('utf-8')
+    )
+
     for message in consumer:
         record = message.value
         print(f"Received record: {record}")
@@ -51,8 +57,10 @@ def consume_and_validate():
         is_valid, message_id, error_reason = validate_record(record.copy())  # Use copy to avoid modifying original
 
         if is_valid:
-            # Process valid record (e.g., store in database, process further)
-            print(f"Processing valid record with message_id {message_id}")
+            # Send valid record to Spark input topic
+            spark_producer.send("spark_input", record)
+            spark_producer.flush()
+            print(f"Sent valid record to spark_input topic: message_id {message_id}")
         else:
             # Send invalid record to dead-letter queue
             invalid_record = {
