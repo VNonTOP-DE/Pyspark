@@ -19,9 +19,7 @@ def main():
         StructField("avatar_url", StringType(), True),
         StructField("url", StringType(), True),
         StructField("status", StringType(), True),  # Changed 'state' to 'status' to match producer schema
-        StructField("log_timestamp", StringType(), True),
-        StructField("message_id", StringType(), True),  # Added for validation
-        StructField("hash", StringType(), True)  # Added for validation
+        StructField("log_timestamp", StringType(), True)
     ])
 
     # Read from the spark_input Kafka topic
