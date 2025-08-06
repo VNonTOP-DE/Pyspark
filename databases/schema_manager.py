@@ -73,6 +73,8 @@ def create_mongodb_schema(db):
             }
         }
     })
+    # Create a unique index on the user_id field
+    db["users"].create_index("user_id", unique=True)
     print("-------------created Collection Users in MongoDB---------------")
 
 

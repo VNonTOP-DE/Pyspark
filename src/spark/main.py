@@ -3,8 +3,7 @@ from pyspark.sql.functions import col, lit
 from config.spark_config import SparkConnect
 from pyspark.sql.types import *
 from config.database_config import get_spark_config
-# from src.spark.spark_write_data import SparkWriteDatabases
-from src.spark.btvn_spark_write_data import SparkWriteDatabases
+from src.spark.TH3_spark_write_data import SparkWriteDatabases
 def main():
     jars = [
         "mysql:mysql-connector-java:8.0.33",
@@ -41,19 +40,24 @@ def main():
         col("actor.gravatar_id").alias("gravatar_id"),
         col("actor.url").alias("url"),
         col("actor.avatar_url").alias("avatar_url"),
-        col("spark_temp").alias("spark_temp")
+        # col("spark_temp").alias("spark_temp")
     )
 
     spark_configs = get_spark_config()
 
     df_write = SparkWriteDatabases(sparkconnect.spark, spark_configs)
 
-    df_write.write_all_databases(df_write_table)
-
+    # df_write.write_all_databases(df_write_table)
+    df_write.spark_write_table(df_write_table,spark_configs["mysql"]["jdbc_url"], spark_configs["mysql"]["config"] )
+    df_write.spark_write_collection(df_write_table, spark_configs["mongodb"]["uri"], spark_configs["mongodb"]["database"])
     #validate
-    df_write.validate_spark_mysql(df_write_table,spark_configs["mysql"]["table"], spark_configs["mysql"]["jdbc_url"], spark_configs["mysql"]["config"] )
-    df_write.validate_spark_mongodb(df_write_table, spark_configs, spark_configs["mongodb"]["uri"], spark_configs["mongodb"]["database"],spark_configs["mongodb"]["collection"] )
+    df_write.validate_spark_mysql(df_write_table,spark_configs["mysql"]["jdbc_url"], spark_configs["mysql"]["config"] ,mode="append")
+    df_write.validate_spark_mongodb(df_write_table, spark_configs["mongodb"]["uri"], spark_configs["mongodb"]["database"] )
+    #df_write.validate_spark_mongodb(df_write_table, spark_configs, spark_configs["mongodb"]["uri"], spark_configs["mongodb"]["database"],spark_configs["mongodb"]["collection"] )
 
+    df_write.insert_data_mysql(spark_configs["mysql"]["config"])
+    df_write.insert_data_mongodb(spark_configs["mongodb"]["uri"], spark_configs["mongodb"]["database"])
+    # df_write.validate_spark_all_databases(df_write_table, mode="append")
 
 if __name__ == "__main__":
     main()

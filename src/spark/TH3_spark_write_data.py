@@ -1,6 +1,8 @@
 from pyspark.sql import SparkSession, DataFrame
 from typing import Dict
 
+from config.database_config import get_database_config
+from databases.mongodb_connect import MongoDBConnect
 from databases.mysql_connect import MySQLConnect
 
 
@@ -9,133 +11,192 @@ class SparkWriteDatabases:
         self.spark = spark
         self.db_config = db_config
 
-
-
-        #muc dich: write data vao mysql
-        #can truyen vao cac tham so j?
     #step
     #database: khoi tao spark -> create dataframe -> set up config -> use spark write data to mysql
-    def spark_write_table(self, df_write: DataFrame,  mode: str = "overwrite"):
+    def spark_write_table(self, df_write: DataFrame, jdbc_url : str, config : Dict,  mode: str = "overwrite"):
+        df_write.write \
+                .format("jdbc") \
+                .option("url", jdbc_url) \
+                .option("dbtable", "spark_table_temp") \
+                .option("user", config["user"]) \
+                .option("password", config["password"]) \
+                .option("driver", config["driver"]) \
+                .mode(mode) \
+                .save()
+
+        print(f"------spark wrote new data to mysql table : spark_table_temp SUCCESSFULLY -----")
 
 
-        #Spark write dataframe to new table
-        df_write \
-            .write \
-            .mode(mode) \
-            .saveAsTable("spark_table_temp")
 
-        print(f"------spark wrote data to table spark_table_temp SUCCESSFULLY -----")
+    def validate_spark_mysql(self,df_write: DataFrame, jdbc_url: str, config:Dict, mode :str = "append", table_name: str = "spark_table_temp" ):
+        df_read = self.spark.read \
+                .format("jdbc") \
+                .option("url", jdbc_url) \
+                .option("dbtable", table_name) \
+                .option("user", config["user"]) \
+                .option("password", config["password"]) \
+                .option("driver", config["driver"]) \
+                .load()
 
-    def subtract_dataframe(self, df_spark_write: DataFrame, df_read_table: DataFrame,
-                           table_name: str = "spark_table_temp", mode: str = "append"):
-        result = df_spark_write.exceptAll(df_read_table)
-        missing_count = result.count()
+        def subtract_dataframe(df_spark_write: DataFrame, df_read_table: DataFrame):
+            result = df_spark_write.exceptAll(df_read_table)
 
-        if missing_count > 0:
-            print(f"---WARNING: {missing_count} records missing in {table_name}---")
-            result.show(10, truncate=False)
-            # Write missing records back to spark_table_temp
-            result.write.mode(mode).saveAsTable(table_name)
-            print(f"-----Spark wrote {missing_count} MISSING RECORDS to table: {table_name} SUCCESSFULLY------")
+
+            if not result.isEmpty():
+                result \
+                    .write \
+                    .format("jdbc") \
+                    .option("url", jdbc_url) \
+                    .option("dbtable", "spark_table_temp") \
+                    .option("user", config["user"]) \
+                    .option("password", config["password"]) \
+                    .option("driver", config["driver"]) \
+                    .mode(mode) \
+                    .save()
+
+                print(f"------spark wrote MISSING data to table : spark_table_temp SUCCESSFULLY -----")
+            else:
+                print(f"-----No missing records found in spark_table_temp-----")
+        if df_write.count() != df_read.count():
+            print(f"------Missing data in table: {table_name}, writing Missing data to table: {table_name}...------")
+            subtract_dataframe(df_write, df_read)
         else:
-            print(f"-----No missing records found in {table_name}-----")
+            print(f"Validated :{df_read.count()} records in spark_table_temp")
+            subtract_dataframe(df_write, df_read)
+        print(f"--------Validated Spark write data to table : spark_table_temp successfully----------")
 
 
-    def validate_spark(self,df_write: DataFrame, mode :str = "append" ):
-        df_read = self.spark.table("spark_table_temp")
-        # df_read.show()
-        # check Number of records
-        # Step 2: Validate record count
-        original_count = df_write.count()
-        read_count = df_read.count()
-        print(f"Total records in original DataFrame: {original_count}")
-        print(f"Total records in spark_table_temp: {read_count}")
+    def insert_data_mysql(self, config: Dict):
+        with MySQLConnect(config["host"], config["port"], config["user"],
+                          config["password"]) as mysql_client:
+            connection, cursor = mysql_client.connection, mysql_client.cursor
+            database = get_database_config()["mysql"].database
+            connection.database = database
+            cursor.execute("SELECT s.* from spark_table_temp s LEFT JOIN users u ON u.user_id = s.user_id WHERE u.user_id IS NULL;")
+            records = []
+            row = cursor.fetchone()
 
-        if original_count == read_count:
-            print(f"--------Validated {read_count} records SUCCESSFULLY---------")
-        else:
-            print(
-                f"---------Record count mismatch: {original_count} (original) vs {read_count} (spark_table_temp)---------------")
+            while row:
+                records.append(row)
+                row = cursor.fetchone()
 
 
+            for rec in records:
+                try:
+                    cursor.execute("INSERT INTO users(user_id, login, gravatar_id, url, avatar_url) VALUES(%s,%s,%s,%s,%s)",
+                            rec)
+                    connection.commit()
+                    print("-----insert data into mysql successfully-----")
+                except Exception as e:
+                    print(f"Error inserting record {rec}: {str(e)}")
+                    continue
 
-
-        #  Deduplicate spark_table_temp by 'id' (keep first occurrence)
-        df_read_dedup = df_read.dropDuplicates(["id"])
-        print(f"Number of records after deduplication: {df_read_dedup.count()}")
-
-        return df_read_dedup
-        #OPTION 2: USE LEFT ANTI JOIN
-    #     # Step 6: Find records in spark_table_temp not in MySQL users
-    #     missing_records = df_read_dedup.join(df_mysql, "id", "left_anti")
-    #     missing_count = missing_records.count()
-    #     print(f"Number of records in spark_table_temp not in MySQL users: {missing_count}")
-    #
-    #     if missing_count > 0:
-    #         print("Missing records found. Writing to MySQL users table...")
-    #         try:
-    #             missing_records.write \
-    #             .format("jdbc") \
-    #             .option("url", jdbc_url) \
-    #             .option("dbtable", table_name) \
-    #             .option("user", config["user"]) \
-    #             .option("password", config["password"]) \
-    #             .option("driver", config["driver"]) \
-    #             .mode(mode) \
-    #             .save()
-    #             print(f"-----Successfully wrote {missing_count} missing records to MySQL users table-----")
-    #         except Exception as e:
-    #             print(f"Error writing to MySQL users table: {str(e)}")
-    #             raise
-    #     else:
-    #         print("No missing records found. No data written to MySQL.")
-    #
-    # except Exception as e:
-    # print(f"Error during validation: {str(e)}")
-    # raise
-
-    def read_spark_mysql(self, table_name: str, jdbc_url: str, config: Dict):
-        df_mysql = self.spark.read \
-            .format("jdbc") \
-            .option("url", jdbc_url) \
-            .option("dbtable", table_name) \
-            .option("user", config["user"]) \
-            .option("password", config["password"]) \
-            .option("driver", config["driver"]) \
-            .load()
-        return df_mysql
-
-
-    def filter_record(self, df_mysql: DataFrame, df_read_dedup: DataFrame):
-        #  Use unionAll and distinct to combine and get unique records
-        # Ensure both DataFrames have the same columns for unionAll
-        df_mysql_selected = df_mysql.select(df_read_dedup.columns)
-        combined_df = df_read_dedup.unionAll(df_mysql_selected)
-        unique_df = combined_df.dropDuplicates(["id"])
-        print(f"Number of unique records after unionAll and distinct: {unique_df.count()}")
-        return unique_df
-        #  Overwrite MySQL users table with unique records
-
-    print("Overwriting MySQL users table with unique records...")
-
-    def spark_write_mysql(self, unique_df: DataFrame, table_name: str, jdbc_url: str, config: Dict, mode: str = "append"):
-
-        #Spark write dataframe to MySQL
-        unique_df.write \
-            .format("jdbc") \
-            .option("url", jdbc_url) \
-            .option("dbtable", table_name) \
-            .option("user", config["user"]) \
-            .option("password", config["password"]) \
-            .option("driver", config["driver"]) \
+    def spark_write_collection(self, df_write: DataFrame, uri: str, database: str,  mode: str = "overwrite"):
+        df_write.write \
+            .format("mongo") \
+            .option("uri", uri) \
+            .option("database", database) \
+            .option("collection", "spark_table_temp") \
             .mode(mode) \
             .save()
+        print(f"-----Spark wrote data to MongoDB collection: {database}.spark_table_temp SUCCESSFULLY---")
 
-        print(f"------spark wrote new data to mysql table : {table_name} SUCCESSFULLY -----")
+    def validate_spark_mongodb(self,df_write: DataFrame, uri:str, database: str, collection: str = "spark_table_temp"):
+        # Read from MongoDB
+        df_read = self.spark.read \
+            .format("mongo") \
+            .option("uri", uri) \
+            .option("database", database) \
+            .option("collection", collection) \
+            .load()
+        # Select only the columns matching df_write
+        df_read = df_read.select("user_id", "login", "gravatar_id", "url", "avatar_url")
+
+        print(f"-------------Read DataFrame from MongoDB collection {database}.{collection}---------")
+
+        def subtract_dataframe(df_spark_write: DataFrame, df_read_collection: DataFrame, mode: str = "append"):
+            result = df_spark_write.exceptAll(df_read_collection)
 
 
+            if not result.isEmpty():
+                result \
+                    .write \
+                    .format("mongo") \
+                    .option("uri", uri) \
+                    .option("database", database) \
+                    .option("collection", "spark_table_temp") \
+                    .mode(mode) \
+                    .save()
 
-    def write_all_databases(self, df_write: DataFrame, mode: str = "append" ):
+                print(f"------spark wrote MISSING data to collection : spark_table_temp SUCCESSFULLY -----")
+            else:
+                print(f"-----No missing records found in spark_table_temp-----")
+        if df_write.count() != df_read.count():
+            print(f"------Missing data in collection: {collection}, writing Missing data to collection: {collection}...------")
+            subtract_dataframe(df_write, df_read)
+        else:
+            print(f"Validated :{df_read.count()} records in spark_table_temp")
+            subtract_dataframe(df_write, df_read)
+        print(f"--------Validated Spark write data to collection : spark_table_temp successfully----------")
+
+    def insert_data_mongodb(self, uri, database):
+        with MongoDBConnect(uri, database) as mongo_client:
+            db = mongo_client.db
+            try:
+                # Define the aggregation pipeline to find spark_table_temp documents
+                # where user_id does not exist in the users collection
+                pipeline = [
+                    {
+                        "$lookup": {
+                            "from": "users",  # The users collection
+                            "localField": "user_id",  # Field in spark_table_temp
+                            "foreignField": "user_id",  # Field in users
+                            "as": "user_data"  # Temporary array to store joined data
+                        }
+                    },
+                    {
+                        "$match": {
+                            "user_data": {"$eq": []}  # Filter where no matching users were found
+                        }
+                    },
+                    {
+                        "$project": {
+                            "user_id": 1,  # Include fields to insert
+                            "login": 1,
+                            "gravatar_id": 1,
+                            "url": 1,
+                            "avatar_url": 1,
+                            "_id": 0  # Exclude the _id field
+                        }
+                    }
+                ]
+
+                # Execute the aggregation pipeline
+                records = list(db["spark_table_temp"].aggregate(pipeline))
+
+                # Insert matching records into the users collection
+                if records:
+                    for rec in records:
+                        try:
+                            db["users"].insert_one({
+                                "user_id": rec.get("user_id"),
+                                "login": rec.get("login"),
+                                "gravatar_id": rec.get("gravatar_id"),
+                                "url": rec.get("url"),
+                                "avatar_url": rec.get("avatar_url")
+                            })
+                            print(
+                                f"-----Inserted document with user_id {rec.get('user_id')} into users collection-----")
+                        except Exception as e:
+                            print(f"Error inserting record {rec}: {str(e)}")
+                            continue
+                    print(f"-----Successfully scanned {len(records)} documents into users collection-----")
+                else:
+                    print("No documents found to insert")
+
+            except Exception as e:
+                print(f"Error during MongoDB operation: {str(e)}")
+def write_all_databases(self, df_write: DataFrame, mode: str = "append" ):
         self.spark_write_mysql(
             df_write,
             self.db_config["mysql"]["table"],

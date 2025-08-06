@@ -89,19 +89,19 @@ class SparkWriteDatabases:
 
     def spark_write_mongodb(self, df_write: DataFrame, config: Dict, uri: str, database: str, collection: str, mode: str = "append"):
         # Add field spark_temp using MongoDB client
-        try:
-            with MongoDBConnect(uri, database) as mongo_client:
-                # Select the database
-                db = mongo_client.db
-                # Add new field spark_temp to all documents in the collection
-                result = db[collection].update_many(
-                    {},  # Empty filter to match all documents
-                    {"$set": {"spark_temp": "sparkwrite"}}  # Add spark_temp field
-                )
-                print(
-                    f"-----------------ADDED Field spark_temp to MongoDB collection {database}.{collection} ({result.modified_count} documents updated)------------------")
-        except Exception as e:
-            raise Exception(f"-------Failed to connect to MongoDB: {str(e)}--------")
+        # try:
+        #     with MongoDBConnect(uri, database) as mongo_client:
+        #         # Select the database
+        #         db = mongo_client.db
+        #         # Add new field spark_temp to all documents in the collection
+        #         result = db[collection].update_many(
+        #             {},  # Empty filter to match all documents
+        #             {"$set": {"spark_temp": "sparkwrite"}}  # Add spark_temp field
+        #         )
+        #         print(
+        #             f"-----------------ADDED Field spark_temp to MongoDB collection {database}.{collection} ({result.modified_count} documents updated)------------------")
+        # except Exception as e:
+        #     raise Exception(f"-------Failed to connect to MongoDB: {str(e)}--------")
 
         # Write DataFrame to MongoDB
         df_write.write \
